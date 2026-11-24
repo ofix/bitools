@@ -12,7 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
+	"net/url"
 	"github.com/mdp/qrterminal/v3"
 	"github.com/quic-go/quic-go/http3"
 )
