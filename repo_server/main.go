@@ -193,7 +193,7 @@ func main() {
 	mux.HandleFunc("/api/download", handleDownload)
 
 	ip := getLocalIP()
-	url := "https://" + ip + ":8443"
+	url := "https://" + ip + ":10000"
 
 	// 生成自签名证书（如果不存在）
 	if _, err := os.Stat("cert.pem"); os.IsNotExist(err) {
@@ -207,8 +207,18 @@ func main() {
 	log.Printf("📱 请使用手机扫码或访问: %s\n", url)
 
 	// 启动 QUIC 服务器
-	err := http3.ListenAndServeQUIC(":10000", "cert.pem", "key.pem", mux)
-	if err != nil {
-		log.Fatal(err)
+	go func() {
+		log.Println("HTTP/3 服务启动，监听 :10000 (UDP)")
+		if err := http3.ListenAndServeQUIC(":10000", "cert.pem", "key.pem", mux); err != nil {
+			log.Printf("HTTP/3 启动失败: %v", err)
+		}
+	}()
+	
+	// HTTPS (TCP)，并告知客户端支持 HTTP/3
+	srv := &http.Server{
+		Addr:    ":10000",
+		Handler: mux,
 	}
+	log.Println("HTTPS 服务启动，监听 :10000 (TCP)")
+	log.Fatal(srv.ListenAndServeTLS("cert.pem", "key.pem"))
 }
