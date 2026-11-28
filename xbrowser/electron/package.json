@@ -1,0 +1,45 @@
+{
+    "name": "tunnel-browser",
+    "version": "1.0.0",
+    "main": "main.js",
+    "scripts": {
+        "start": "electron .",
+        "dist": "electron-builder --win --x64"
+    },
+    "devDependencies": {
+        "electron": "^33.0.0",
+        "electron-builder": "^25.0.0"
+    },
+    "build": {
+        "appId": "com.tunnel.browser",
+        "productName": "TunnelBrowser",
+        "directories": {
+            "output": "dist"
+        },
+        "extraResources": [
+            {
+                "from": "proxy.client.exe",
+                "to": "proxy.client.exe"
+            }
+        ],
+        "files": [
+            "main.js",
+            "index.html"
+        ],
+        "win": {
+            "target": [
+                {
+                    "target": "nsis",
+                    "arch": [
+                        "x64"
+                    ]
+                }
+            ],
+            "icon": "build/icon.ico"
+        },
+        "nsis": {
+            "oneClick": false,
+            "allowToChangeInstallationDirectory": true
+        }
+    }
+}

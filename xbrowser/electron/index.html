@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+
+<head>
+    <meta charset="UTF-8">
+    <title>Tunnel Browser</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: system-ui
+        }
+
+        body {
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden
+        }
+
+        .tab-bar {
+            display: flex;
+            gap: 4px;
+            padding: 6px 8px;
+            background: #ddd;
+            align-items: center
+        }
+
+        .tab {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 8px;
+            background: #eee;
+            border-radius: 6px 6px 0 0;
+            cursor: pointer;
+            min-width: 120px;
+            max-width: 220px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis
+        }
+
+        .tab.active {
+            background: #fff
+        }
+
+        .tab .close {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            text-align: center;
+            line-height: 16px;
+            font-size: 12px
+        }
+
+        .tab .close:hover {
+            background: #ccc
+        }
+
+        .new-tab {
+            padding: 4px 8px;
+            cursor: pointer
+        }
+
+        .address-bar {
+            display: flex;
+            gap: 6px;
+            padding: 8px;
+            background: #eee;
+            align-items: center
+        }
+
+        #url {
+            flex: 1;
+            padding: 6px 8px;
+            font-size: 14px
+        }
+
+        button {
+            padding: 6px 9px;
+            cursor: pointer;
+            border: none;
+            border-radius: 4px
+        }
+
+        .status {
+            padding: 4px 8px;
+            border-radius: 4px;
+            background: #ddd;
+            font-size: 13px
+        }
+
+        .ok {
+            background: #b8e9b8
+        }
+
+        .fail {
+            background: #ffb8b8
+        }
+
+        .bookmark-bar {
+            display: flex;
+            gap: 6px;
+            padding: 6px 8px;
+            background: #f4f4f4;
+            align-items: center;
+            flex-wrap: wrap
+        }
+
+        .bookmark-item {
+            padding: 3px 7px;
+            background: #e9e9e9;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            white-space: nowrap
+        }
+
+        .bookmark-item:hover {
+            background: #ddd
+        }
+
+        .bookmark-item .del {
+            margin-left: 4px;
+            color: #666
+        }
+
+        .modal {
+            position: fixed;
+            top: 80px;
+            left: 20px;
+            width: 420px;
+            height: 450px;
+            background: #fff;
+            border: 1px solid #aaa;
+            border-radius: 6px;
+            z-index: 999;
+            display: none;
+            flex-direction: column
+        }
+
+        .modal-head {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px;
+            background: #eee
+        }
+
+        .modal-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px
+        }
+
+        .h-item {
+            padding: 4px 6px;
+            cursor: pointer;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between
+        }
+
+        .h-item:hover {
+            background: #f5f5f5
+        }
+    </style>
+</head>
+
+<body>
+    <div class="tab-bar" id="tabBar">
+        <div class="new-tab" id="btnNewTab">+ 新建</div>
+    </div>
+    <div class="address-bar">
+        <button id="btnBack">←</button>
+        <button id="btnForward">→</button>
+        <button id="btnReload">⟳</button>
+        <input id="url" placeholder="输入网址">
+        <button id="btnGo">访问</button>
+        <button id="btnAddBookmark">★ 添加书签</button>
+        <button id="btnHistory">📜 历史</button>
+        <button id="btnRestartTunnel">重启隧道</button>
+        <span class="status" id="tunnelStatus">隧道启动中</span>
+    </div>
+    <div class="bookmark-bar" id="bookmarkBar"></div>
+
+    <div class="modal" id="historyModal">
+        <div class="modal-head">
+            <span>浏览历史</span>
+            <div>
+                <button id="clearHistory">清空</button>
+                <button id="closeHistory">关闭</button>
+            </div>
+        </div>
+        <div class="modal-body" id="historyList"></div>
+    </div>
+
+    <script>
+        const { ipcRenderer } = require('electron');
+        const tabBar = document.getElementById('tabBar');
+        const urlInput = document.getElementById('url');
+        const tunnelStatusEl = document.getElementById('tunnelStatus');
+        const bookmarkBar = document.getElementById('bookmarkBar');
+        const historyModal = document.getElementById('historyModal');
+        const historyListEl = document.getElementById('historyList');
+
+        // ========== IndexedDB 封装 ==========
+        let db;
+        function openDB () {
+            return new Promise((resolve, reject) => {
+                const req = indexedDB.open('BrowserDB', 1);
+                req.onupgradeneeded = e => {
+                    db = e.target.result;
+                    db.createObjectStore('bookmarks', { keyPath: 'url' });
+                    db.createObjectStore('history', { keyPath: 'url' });
+                };
+                req.onsuccess = e => { db = e.target.result; resolve(db); };
+                req.onerror = () => reject(req.error);
+            });
+        }
+        function dbAdd (storeName, data) {
+            return new Promise(resolve => {
+                const tx = db.transaction(storeName, 'readwrite');
+                tx.objectStore(storeName).put(data);
+                tx.oncomplete = () => resolve();
+            });
+        }
+        function dbGetAll (storeName) {
+            return new Promise(resolve => {
+                const arr = [];
+                const req = db.transaction(storeName).objectStore(storeName).openCursor();
+                req.onsuccess = e => {
+                    const cur = e.target.result;
+                    if (cur) { arr.push(cur.value); cur.continue(); }
+                    else resolve(arr);
+                }
+            });
+        }
+        function dbDel (storeName, key) {
+            return new Promise(resolve => {
+                const tx = db.transaction(storeName, 'readwrite');
+                tx.objectStore(storeName).delete(key);
+                tx.oncomplete = () => resolve();
+            });
+        }
+        function dbClear (storeName) {
+            return new Promise(resolve => {
+                const tx = db.transaction(storeName, 'readwrite');
+                tx.objectStore(storeName).clear();
+                tx.oncomplete = () => resolve();
+            });
+        }
+
+        openDB().then(() => {
+            renderBookmarks();
+        });
+
+        // 页面导航事件，写入历史
+        ipcRenderer.on('page-nav', async (_, payload) => {
+            const { title, url } = payload;
+            await dbAdd('history', { title, url, time: Date.now() });
+        });
+
+        // 按钮事件
+        document.getElementById('btnBack').onclick = () => ipcRenderer.invoke('go-back');
+        document.getElementById('btnForward').onclick = () => ipcRenderer.invoke('go-forward');
+        document.getElementById('btnReload').onclick = () => ipcRenderer.invoke('reload');
+        document.getElementById('btnGo').onclick = () => ipcRenderer.invoke('navigate', urlInput.value);
+        urlInput.onkeydown = e => { if (e.key === 'Enter') ipcRenderer.invoke('navigate', urlInput.value) };
+        document.getElementById('btnNewTab').onclick = () => ipcRenderer.invoke('new-tab');
+
+        document.getElementById('btnAddBookmark').onclick = async () => {
+            const activeUrl = urlInput.value;
+            const title = urlInput.value;
+            await dbAdd('bookmarks', { title, url: activeUrl });
+            renderBookmarks();
+        };
+
+        document.getElementById('btnHistory').onclick = async () => {
+            const list = await dbGetAll('history');
+            list.sort((a, b) => b.time - a.time);
+            historyListEl.innerHTML = '';
+            list.forEach(h => {
+                const div = document.createElement('div');
+                div.className = 'h-item';
+                div.innerHTML = `<span>${escapeHtml(h.title || h.url)}</span><span style="color:#888">×</span>`;
+                div.onclick = (ev) => {
+                    if (ev.target.textContent === '×') dbDel('history', h.url).then(() => { div.remove(); });
+                    else ipcRenderer.invoke('new-tab', h.url);
+                };
+                historyListEl.appendChild(div);
+            });
+            historyModal.style.display = 'flex';
+        };
+        document.getElementById('closeHistory').onclick = () => historyModal.style.display = 'none';
+        document.getElementById('clearHistory').onclick = async () => {
+            await dbClear('history');
+            historyListEl.innerHTML = '';
+        };
+
+        document.getElementById('btnRestartTunnel').onclick = async () => {
+            const res = await ipcRenderer.invoke('restart-tunnel');
+            tunnelStatusEl.innerText = res.ok ? `✅ 就绪，端口${res.port}` : `❌ 失败`;
+            tunnelStatusEl.className = 'status ' + (res.ok ? 'ok' : 'fail');
+        };
+
+        ipcRenderer.on('tab-update', (_, list) => {
+            const newBtn = tabBar.querySelector('.new-tab');
+            tabBar.innerHTML = '';
+            tabBar.appendChild(newBtn);
+            list.forEach(tab => {
+                const div = document.createElement('div');
+                div.className = 'tab ' + (tab.active ? 'active' : '');
+                div.innerHTML = `<span class="title">${escapeHtml(tab.title || tab.url)}</span><span class="close">×</span>`;
+                div.onclick = (e) => {
+                    if (e.target.classList.contains('close')) ipcRenderer.invoke('close-tab', tab.id);
+                    else ipcRenderer.invoke('switch-tab', tab.id);
+                }
+                tabBar.appendChild(div);
+            })
+        });
+        ipcRenderer.on('active-url', (_, u) => urlInput.value = u);
+        ipcRenderer.on('tunnel-status', (_, info) => {
+            tunnelStatusEl.innerText = info.ok ? `✅ 就绪，端口${info.port}` : `❌ 断开`;
+            tunnelStatusEl.className = 'status ' + (info.ok ? 'ok' : 'fail');
+        });
+
+        async function renderBookmarks () {
+            const list = await dbGetAll('bookmarks');
+            bookmarkBar.innerHTML = '';
+            list.forEach(b => {
+                const span = document.createElement('span');
+                span.className = 'bookmark-item';
+                span.innerHTML = `${escapeHtml(b.title)} <span class="del">×</span>`;
+                span.onclick = (e) => {
+                    if (e.target.classList.contains('del')) {
+                        dbDel('bookmarks', b.url).then(renderBookmarks);
+                    } else {
+                        ipcRenderer.invoke('new-tab', b.url);
+                    }
+                }
+                bookmarkBar.appendChild(span);
+            })
+        }
+
+        function escapeHtml (str) {
+            return String(str)
+                .replaceAll('&', '&amp;')
+                .replaceAll('<', '&lt;')
+                .replaceAll('>', '&gt;')
+                .replaceAll('"', '&quot;')
+                .replaceAll("'", "&#039;");
+        }
+    </script>
+</body>
+
+</html>
